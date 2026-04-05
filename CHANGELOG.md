@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.3
+
+- simplified the shared-gold sync flow back toward the stable host-mirroring path to remove recent multiplayer regressions
+- normalized shared gold on deterministic event exits so Neow no longer desyncs when only the host has the mod installed
+- restored stable combat and reward progression after the Neow and shop hotfix series
+
 ## 1.0.2
 
 - fixed multiplayer load/rejoin flow so a crashed or disconnected player can rejoin a shared-gold run without inheriting the placeholder modifier

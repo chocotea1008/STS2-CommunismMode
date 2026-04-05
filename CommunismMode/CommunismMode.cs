@@ -28,11 +28,13 @@ using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
 using MegaCrit.Sts2.Core.Multiplayer.Transport;
+using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Rewards;
+using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Saves.Runs;
@@ -218,6 +220,7 @@ internal static class CommunismModeRuntime
 		{
 			player.Gold = gold;
 		}
+		RefreshActiveTopBarGold();
 	}
 
 	public static Player GetMerchantPlayer(MerchantEntry entry)
@@ -243,12 +246,17 @@ internal static class CommunismModeRuntime
 			return;
 		}
 
-		if (!SharedGoldInitializedRuns.Add(runState))
+		if (SharedGoldInitializedRuns.Contains(runState))
 		{
 			return;
 		}
 
 		List<Player> players = runState.Players.ToList();
+		if (players.Count <= 1)
+		{
+			return;
+		}
+
 		Dictionary<ulong, int> originalGoldByPlayer = players.ToDictionary(static player => player.NetId, static player => player.Gold);
 		int sharedGold = GetSharedGoldTotal(runState);
 		if (sharedGold <= 0)
@@ -261,7 +269,6 @@ internal static class CommunismModeRuntime
 			player.Gold = sharedGold;
 		}
 
-		RunLocation location = runState.CurrentLocation;
 		ulong hostPlayerId = hostService.NetId;
 		foreach (Player targetPeer in players)
 		{
@@ -281,13 +288,15 @@ internal static class CommunismModeRuntime
 				RewardObtainedMessage message = new()
 				{
 					rewardType = RewardType.Gold,
-					location = location,
+					location = runState.CurrentLocation,
 					goldAmount = delta,
 					wasSkipped = false
 				};
 				SendRawMessage(hostService, targetPeer.NetId, sourcePlayer.NetId, message);
 			}
 		}
+
+		SharedGoldInitializedRuns.Add(runState);
 	}
 
 	public static void BroadcastGoldToAllPlayers(Player player, int amount)
@@ -506,6 +515,36 @@ internal static class CommunismModeRuntime
 			popupLabel.SetTextAutoSize(delta == 0 ? string.Empty : ((delta > 0 ? "+" : string.Empty) + delta));
 			popupLabel.Modulate = Colors.Transparent;
 		}
+	}
+
+	public static void RefreshActiveTopBarGold()
+	{
+		NTopBarGold? topBarGold = NRun.Instance?.GlobalUi?.TopBar?.Gold;
+		if (topBarGold != null)
+		{
+			RefreshTopBarGold(topBarGold);
+		}
+	}
+
+	public static void NormalizeSharedGoldForDeterministicEventExit(IRunState? runState, EventModel canonicalEvent)
+	{
+		if (runState == null ||
+			!IsActive(runState) ||
+			RunManager.Instance.NetService.Type != NetGameType.Host ||
+			!canonicalEvent.IsDeterministic ||
+			runState.Players.Count == 0)
+		{
+			return;
+		}
+
+		int sharedGold = GetSharedGold(runState);
+		if (runState.Players.All(player => player.Gold == sharedGold))
+		{
+			return;
+		}
+
+		Log.Warn($"Normalizing shared gold before exiting {canonicalEvent.Id}: {string.Join(',', runState.Players.Select(static player => player.Gold))} -> {sharedGold}");
+		SetSharedGold(runState, sharedGold);
 	}
 
 	private static void UpdateGainHistory(Player player, int goldGained, bool wasStolenBack)
@@ -1050,6 +1089,19 @@ public static class CommunismModeNeowGenerateInitialOptionsPatch
 	}
 }
 
+[HarmonyPatch(typeof(EventSynchronizer), nameof(EventSynchronizer.BeginEvent))]
+public static class CommunismModeNeowBeginPatch
+{
+	[HarmonyPostfix]
+	private static void Postfix(EventModel canonicalEvent)
+	{
+		if (canonicalEvent is Neow neow)
+		{
+			CommunismModeRuntime.ApplyInitialSharedGoldIfNeeded();
+		}
+	}
+}
+
 [HarmonyPatch(typeof(AncientEventModel), "SetInitialEventState")]
 public static class CommunismModeNeowInitialStatePatch
 {
@@ -1101,6 +1153,16 @@ public static class CommunismModeCleanupPatch
 
 [HarmonyPatch(typeof(RunManager), nameof(RunManager.Launch))]
 public static class CommunismModeLaunchPatch
+{
+	[HarmonyPostfix]
+	private static void Postfix()
+	{
+		CommunismModeRuntime.ApplyInitialSharedGoldIfNeeded();
+	}
+}
+
+[HarmonyPatch(typeof(NetHostGameService), nameof(NetHostGameService.SetPeerReadyForBroadcasting))]
+public static class CommunismModePeerReadyPatch
 {
 	[HarmonyPostfix]
 	private static void Postfix()
@@ -1228,5 +1290,15 @@ public static class CommunismModeHostPacketMirrorPatch
 
 		messageBus.SendMessageToAllHandlers(message, senderPlayerId);
 		return false;
+	}
+}
+
+[HarmonyPatch(typeof(EventRoom), nameof(EventRoom.Exit))]
+public static class CommunismModeDeterministicEventExitPatch
+{
+	[HarmonyPrefix]
+	private static void Prefix(EventRoom __instance, IRunState? runState)
+	{
+		CommunismModeRuntime.NormalizeSharedGoldForDeterministicEventExit(runState, __instance.CanonicalEvent);
 	}
 }
