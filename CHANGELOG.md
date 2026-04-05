@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.4
+
+- replaced the unstable Neow prediction logic with a simpler host-authored initial shared-gold sync
+- limited Neow-only catch-up gold replication so combat rewards and shop spending stop being double-applied
+- refreshed the multiplayer gold flow for host-only installs and packaged the current hotfix build as `v1.0.4`
+
 ## 1.0.3
 
 - simplified the shared-gold sync flow back toward the stable host-mirroring path to remove recent multiplayer regressions
