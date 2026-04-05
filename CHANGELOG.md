@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.6
+
+- split host-authored shared-gold replication by source so events, relics, powers, cards, treasure-room effects, and rewards no longer all reuse the same actor sync rule
+- fixed event-driven shared-gold desyncs such as `Ranwid the Elder` by excluding or correcting the source player slot only when unmodded peers already applied the local gold change
+- added richer gold sync logging to identify which gameplay source triggered each shared-gold update during multiplayer debugging
+
 ## 1.0.5
 
 - centralized shared-gold gain/loss handling so event, relic, reward, shop, and combat gold changes follow one host-authored sync path
