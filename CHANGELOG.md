@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.5
+
+- centralized shared-gold gain/loss handling so event, relic, reward, shop, and combat gold changes follow one host-authored sync path
+- deferred combat-time gold theft and stolen-back reward resolution until the safe post-combat sync window to stop `Gremlin Merc` desyncs
+- limited `Scroll Boxes` to removing only the triggering player's starting gold instead of deleting the full shared pool
+
 ## 1.0.4
 
 - replaced the unstable Neow prediction logic with a simpler host-authored initial shared-gold sync
