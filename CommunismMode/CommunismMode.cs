@@ -34,6 +34,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Saves.Runs;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.sts2.Core.Nodes.TopBar;
@@ -163,6 +164,34 @@ internal static class CommunismModeRuntime
 	public static List<SerializableModifier> SanitizeNetworkModifiers(IEnumerable<SerializableModifier> modifiers)
 	{
 		return modifiers.Where(static modifier => !IsCommunismSerializableModifier(modifier)).ToList();
+	}
+
+	public static SerializableRun CreateSanitizedNetworkRun(SerializableRun run)
+	{
+		return new SerializableRun
+		{
+			SchemaVersion = run.SchemaVersion,
+			Acts = run.Acts,
+			Modifiers = SanitizeNetworkModifiers(run.Modifiers),
+			DailyTime = run.DailyTime,
+			CurrentActIndex = run.CurrentActIndex,
+			EventsSeen = run.EventsSeen,
+			PreFinishedRoom = run.PreFinishedRoom,
+			SerializableOdds = run.SerializableOdds,
+			SerializableSharedRelicGrabBag = run.SerializableSharedRelicGrabBag,
+			Players = run.Players,
+			SerializableRng = run.SerializableRng,
+			VisitedMapCoords = run.VisitedMapCoords,
+			MapPointHistory = run.MapPointHistory,
+			SaveTime = run.SaveTime,
+			StartTime = run.StartTime,
+			RunTime = run.RunTime,
+			WinTime = run.WinTime,
+			Ascension = run.Ascension,
+			PlatformType = run.PlatformType,
+			MapDrawings = run.MapDrawings,
+			ExtraFields = run.ExtraFields
+		};
 	}
 
 	private static CommunismModeText GetLocalizedCommunismModeText()
@@ -818,6 +847,27 @@ public static class CommunismModeClientLobbyJoinResponseSerializePatch
 		}
 		writer.WriteInt(__instance.ascension, 5);
 		writer.WriteList(CommunismModeRuntime.SanitizeNetworkModifiers(__instance.modifiers));
+		return false;
+	}
+}
+
+[HarmonyPatch(typeof(ClientLoadJoinResponseMessage), nameof(ClientLoadJoinResponseMessage.Serialize))]
+public static class CommunismModeClientLoadJoinResponseSerializePatch
+{
+	[HarmonyPrefix]
+	private static bool Prefix(ref ClientLoadJoinResponseMessage __instance, PacketWriter writer)
+	{
+		if (!CommunismModeRuntime.HasCommunismModifier(__instance.serializableRun.Modifiers))
+		{
+			return true;
+		}
+
+		writer.Write(CommunismModeRuntime.CreateSanitizedNetworkRun(__instance.serializableRun));
+		writer.WriteInt(__instance.playersAlreadyConnected.Count, 6);
+		foreach (ulong item in __instance.playersAlreadyConnected)
+		{
+			writer.WriteULong(item);
+		}
 		return false;
 	}
 }

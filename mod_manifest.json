@@ -3,7 +3,7 @@
   "name": "Communism Mode",
   "author": "chocotea1008",
   "description": "Adds a host-authoritative shared-gold custom run modifier with multiplayer pooling and host-side client sync.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2
+
+- fixed multiplayer load/rejoin flow so a crashed or disconnected player can rejoin a shared-gold run without inheriting the placeholder modifier
+- sanitized `ClientLoadJoinResponseMessage` save payloads before they are sent to clients
+
 ## 1.0.1
 
 - fixed multiplayer clients skipping the Neow relic selection when only the host has the mod installed
