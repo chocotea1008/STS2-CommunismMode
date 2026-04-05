@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- fixed multiplayer clients skipping the Neow relic selection when only the host has the mod installed
+- sanitized custom modifier data before lobby and run-start network messages are sent to remote players
+
 ## 1.0.0
 
 - first public release of `Communism Mode`

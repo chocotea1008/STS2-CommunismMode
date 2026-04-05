@@ -24,6 +24,7 @@ using MegaCrit.Sts2.Core.Models.Modifiers;
 using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
 using MegaCrit.Sts2.Core.Multiplayer.Transport;
@@ -33,6 +34,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Saves.Runs;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.sts2.Core.Nodes.TopBar;
 
@@ -96,9 +98,21 @@ internal static class CommunismModeRuntime
 
 	private static readonly MethodInfo NetMessageBusSerializeMessageMethod = AccessTools.Method(typeof(NetMessageBus), "SerializeMessage")!;
 
+	private static readonly ModelId DeprecatedModifierId = ModelDb.GetId<DeprecatedModifier>();
+
 	public static bool HasCommunismModifier(IRunState? runState)
 	{
 		return runState != null && runState.Modifiers.Any(static modifier => modifier is DeprecatedModifier);
+	}
+
+	public static bool HasCommunismModifier(IEnumerable<ModifierModel> modifiers)
+	{
+		return modifiers.Any(static modifier => modifier is DeprecatedModifier);
+	}
+
+	public static bool HasCommunismModifier(IEnumerable<SerializableModifier> modifiers)
+	{
+		return modifiers.Any(IsCommunismSerializableModifier);
 	}
 
 	public static string GetLocalizedTickboxText()
@@ -138,6 +152,19 @@ internal static class CommunismModeRuntime
 		return runState.Players.Sum(static player => player.Gold);
 	}
 
+	public static List<SerializableModifier> SanitizeNetworkModifiers(IEnumerable<ModifierModel> modifiers)
+	{
+		return modifiers
+			.Where(static modifier => modifier is not DeprecatedModifier)
+			.Select(static modifier => modifier.ToSerializable())
+			.ToList();
+	}
+
+	public static List<SerializableModifier> SanitizeNetworkModifiers(IEnumerable<SerializableModifier> modifiers)
+	{
+		return modifiers.Where(static modifier => !IsCommunismSerializableModifier(modifier)).ToList();
+	}
+
 	private static CommunismModeText GetLocalizedCommunismModeText()
 	{
 		string languageCode = (LocManager.Instance?.Language ?? "eng").ToUpperInvariant();
@@ -149,6 +176,11 @@ internal static class CommunismModeRuntime
 	private static string EscapeRichText(string text)
 	{
 		return text.Replace("[", "\\[").Replace("]", "\\]");
+	}
+
+	private static bool IsCommunismSerializableModifier(SerializableModifier modifier)
+	{
+		return modifier.Id?.Equals(DeprecatedModifierId) == true;
 	}
 
 	private static void SetSharedGold(IRunState runState, int gold)
@@ -754,6 +786,79 @@ public static class CommunismModeTickboxTextPatch
 		{
 			highlight.Visible = false;
 		}
+	}
+}
+
+[HarmonyPatch(typeof(ClientLobbyJoinResponseMessage), nameof(ClientLobbyJoinResponseMessage.Serialize))]
+public static class CommunismModeClientLobbyJoinResponseSerializePatch
+{
+	[HarmonyPrefix]
+	private static bool Prefix(ref ClientLobbyJoinResponseMessage __instance, PacketWriter writer)
+	{
+		if (!CommunismModeRuntime.HasCommunismModifier(__instance.modifiers))
+		{
+			return true;
+		}
+
+		if (__instance.playersInLobby == null)
+		{
+			throw new InvalidOperationException("Tried to serialize ClientSlotGrantedMessage with null list!");
+		}
+
+		writer.WriteList(__instance.playersInLobby, 3);
+		writer.WriteBool(__instance.dailyTime.HasValue);
+		if (__instance.dailyTime.HasValue)
+		{
+			writer.Write(__instance.dailyTime.Value);
+		}
+		writer.WriteBool(__instance.seed != null);
+		if (__instance.seed != null)
+		{
+			writer.WriteString(__instance.seed);
+		}
+		writer.WriteInt(__instance.ascension, 5);
+		writer.WriteList(CommunismModeRuntime.SanitizeNetworkModifiers(__instance.modifiers));
+		return false;
+	}
+}
+
+[HarmonyPatch(typeof(LobbyModifiersChangedMessage), nameof(LobbyModifiersChangedMessage.Serialize))]
+public static class CommunismModeLobbyModifiersChangedSerializePatch
+{
+	[HarmonyPrefix]
+	private static bool Prefix(ref LobbyModifiersChangedMessage __instance, PacketWriter writer)
+	{
+		if (!CommunismModeRuntime.HasCommunismModifier(__instance.modifiers))
+		{
+			return true;
+		}
+
+		writer.WriteList(CommunismModeRuntime.SanitizeNetworkModifiers(__instance.modifiers));
+		return false;
+	}
+}
+
+[HarmonyPatch(typeof(LobbyBeginRunMessage), nameof(LobbyBeginRunMessage.Serialize))]
+public static class CommunismModeLobbyBeginRunSerializePatch
+{
+	[HarmonyPrefix]
+	private static bool Prefix(ref LobbyBeginRunMessage __instance, PacketWriter writer)
+	{
+		if (!CommunismModeRuntime.HasCommunismModifier(__instance.modifiers))
+		{
+			return true;
+		}
+
+		if (__instance.playersInLobby == null)
+		{
+			throw new InvalidOperationException("Tried to serialize ClientSlotGrantedMessage with null list!");
+		}
+
+		writer.WriteList(__instance.playersInLobby, 3);
+		writer.WriteString(__instance.seed);
+		writer.WriteList(CommunismModeRuntime.SanitizeNetworkModifiers(__instance.modifiers));
+		writer.WriteString(__instance.act1);
+		return false;
 	}
 }
 

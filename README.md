@@ -54,7 +54,7 @@ This script:
 - builds the project in `Release`
 - copies the mod into the local `mods/communismmode` folder
 - creates a staged release payload under `_publish/communismmode_build_ready/communismmode`
-- creates `_publish/CommunismMode-1.0.0.zip`
+- creates `_publish/CommunismMode-<version>.zip`
 
 ## Compatibility Notes
 
