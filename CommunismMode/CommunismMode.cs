@@ -99,6 +99,8 @@ internal static class CommunismModeRuntime
 
 	private static readonly Dictionary<RunState, List<PendingCombatSharedGoldChange>> PendingCombatSharedGoldChanges = new();
 
+	private static readonly Dictionary<RunState, int> TrackedSharedGoldValues = new();
+
 	private static int IncomingGoldSyncDepth;
 
 	private static int ScrollBoxesContextDepth;
@@ -191,7 +193,9 @@ internal static class CommunismModeRuntime
 
 	public static int GetSharedGold(IRunState runState)
 	{
-		return runState.Players.FirstOrDefault()?.Gold ?? 0;
+		return runState is RunState concreteRunState && TrackedSharedGoldValues.TryGetValue(concreteRunState, out int trackedGold)
+			? trackedGold
+			: runState.Players.FirstOrDefault()?.Gold ?? 0;
 	}
 
 	public static int GetSharedGold(Player player)
@@ -265,6 +269,11 @@ internal static class CommunismModeRuntime
 
 	private static void SetSharedGold(IRunState runState, int gold)
 	{
+		if (runState is RunState concreteRunState)
+		{
+			TrackedSharedGoldValues[concreteRunState] = gold;
+		}
+
 		foreach (Player player in runState.Players)
 		{
 			player.Gold = gold;
@@ -349,8 +358,7 @@ internal static class CommunismModeRuntime
 
 	private static RunLocation GetCurrentGoldSyncLocation(IRunState runState)
 	{
-		RewardSynchronizer? rewardSynchronizer = RunManager.Instance.RewardSynchronizer;
-		return rewardSynchronizer != null ? GetRewardMessageLocation(rewardSynchronizer) : runState.CurrentLocation;
+		return runState.CurrentLocation;
 	}
 
 	public static void ApplyInitialSharedGoldIfNeeded()
@@ -429,8 +437,11 @@ internal static class CommunismModeRuntime
 
 		if (ShouldDeferSharedGoldChange())
 		{
+			int sharedGoldBefore = GetSharedGold(runState);
+			SetTrackedSharedGold(runState, sharedGoldBefore + goldGained);
+			ApplyDeferredCombatGoldGainLocally(player, goldGained);
 			QueuePendingCombatSharedGoldChange(runState, goldGained, isLoss: false, player.NetId, goldGained, sourceContext);
-			Log.Warn($"Communism Mode queued combat gold gain. Player={player.NetId}, Amount={goldGained}, Sync={sourceContext.PeerSyncMode}, Source={sourceContext.Reason}, Pending={DescribePendingCombatSharedGoldChanges(runState)}");
+			Log.Warn($"Communism Mode queued combat gold gain. Player={player.NetId}, Amount={goldGained}, Sync={sourceContext.PeerSyncMode}, Source={sourceContext.Reason}, SharedBefore={sharedGoldBefore}, SharedAfter={GetSharedGold(runState)}, Pending={DescribePendingCombatSharedGoldChanges(runState)}");
 		}
 		else
 		{
@@ -470,8 +481,11 @@ internal static class CommunismModeRuntime
 
 		if (ShouldDeferSharedGoldChange())
 		{
+			int trackedSharedGoldBefore = GetSharedGold(player.RunState);
+			SetTrackedSharedGold(player.RunState, Math.Max(0, trackedSharedGoldBefore - goldLost));
+			ApplyDeferredCombatGoldLossLocally(player, originalGoldLost);
 			QueuePendingCombatSharedGoldChange(player.RunState, goldLost, isLoss: true, player.NetId, originalGoldLost, sourceContext);
-			Log.Warn($"Communism Mode queued combat gold loss. Player={player.NetId}, Original={originalGoldLost}, Resolved={goldLost}, LossType={goldLossType}, Sync={sourceContext.PeerSyncMode}, Source={sourceContext.Reason}, Pending={DescribePendingCombatSharedGoldChanges(player.RunState)}");
+			Log.Warn($"Communism Mode queued combat gold loss. Player={player.NetId}, Original={originalGoldLost}, Resolved={goldLost}, LossType={goldLossType}, Sync={sourceContext.PeerSyncMode}, Source={sourceContext.Reason}, SharedBefore={trackedSharedGoldBefore}, SharedAfter={GetSharedGold(player.RunState)}, Pending={DescribePendingCombatSharedGoldChanges(player.RunState)}");
 			return Task.CompletedTask;
 		}
 
@@ -564,6 +578,7 @@ internal static class CommunismModeRuntime
 	{
 		InitialSharedGoldSyncStates.Clear();
 		PendingCombatSharedGoldChanges.Clear();
+		TrackedSharedGoldValues.Clear();
 		IncomingGoldSyncDepth = 0;
 		ScrollBoxesContextDepth = 0;
 	}
@@ -805,18 +820,47 @@ internal static class CommunismModeRuntime
 			return;
 		}
 
+		int trackedSharedGold = GetSharedGold(runState);
 		foreach (PendingCombatSharedGoldChange change in changes)
 		{
-			int sharedGoldBefore = GetSharedGold(runState);
-			int sharedGoldAfter = change.IsLoss
-				? Math.Max(0, sharedGoldBefore - change.Amount)
-				: sharedGoldBefore + change.Amount;
-			SetSharedGold(runState, sharedGoldAfter);
 			BroadcastResolvedSharedGoldChange(hostService, runState, change.SourcePlayerId, change.Amount, change.IsLoss, change.PeerSyncMode);
 			BroadcastSourceGoldCorrectionIfNeeded(hostService, runState, change.SourcePlayerId, change.SignedSourceCorrectionAmount, change.PeerSyncMode);
 		}
 
-		Log.Warn($"Communism Mode flushed pending combat gold changes. Changes={string.Join(",", changes.Select(change => $"{(change.IsLoss ? "-" : "+")}{change.Amount}@{change.SourcePlayerId}:{change.PeerSyncMode}/{change.Reason}"))}, Shared={GetSharedGold(runState)}");
+		SetSharedGold(runState, trackedSharedGold);
+		Log.Warn($"Communism Mode flushed pending combat gold changes. Changes={string.Join(",", changes.Select(change => $"{(change.IsLoss ? "-" : "+")}{change.Amount}@{change.SourcePlayerId}:{change.PeerSyncMode}/{change.Reason}"))}, Shared={trackedSharedGold}");
+	}
+
+	private static void SetTrackedSharedGold(IRunState runState, int gold)
+	{
+		if (runState is RunState concreteRunState)
+		{
+			TrackedSharedGoldValues[concreteRunState] = gold;
+		}
+
+		RefreshActiveTopBarGold();
+	}
+
+	private static void ApplyDeferredCombatGoldGainLocally(Player player, int amount)
+	{
+		if (amount <= 0)
+		{
+			return;
+		}
+
+		player.Gold += amount;
+		RefreshActiveTopBarGold();
+	}
+
+	private static void ApplyDeferredCombatGoldLossLocally(Player player, int amount)
+	{
+		if (amount <= 0)
+		{
+			return;
+		}
+
+		player.Gold = Math.Max(0, player.Gold - amount);
+		RefreshActiveTopBarGold();
 	}
 
 	private static void SyncImmediateSharedGoldChangeIfNeeded(Player player, int originalAmount, int resolvedAmount, bool isLoss, SharedGoldSourceContext sourceContext)

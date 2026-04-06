@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.7
+
+- audited the base-game gold write paths again so host-authored shared-gold sync now covers the current event, relic, power, potion, card, reward, shop, and treasure-room callsites from one code path
+- stopped combat gold desyncs from drifting the checksum by tracking shared-pool totals separately while still keeping the source player's real combat gold in sync during theft and other in-combat gold changes
+- switched direct shared-gold network messages to the live run location so room-entry relic payouts such as `Maw Bank` use a safer multiplayer timing
+
 ## 1.0.6
 
 - split host-authored shared-gold replication by source so events, relics, powers, cards, treasure-room effects, and rewards no longer all reuse the same actor sync rule
