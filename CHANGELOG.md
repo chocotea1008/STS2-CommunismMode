@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.8
+
+- limited the Communism-specific Neow override to runs where `Communism` is the only modifier so deck-building modifiers such as `Sealed Deck` and `Draft` keep their normal card-selection flow
+- restored compatibility with other modifiers that populate or alter the starting deck through Neow, preventing empty-deck starts when those modifiers are combined with `Communism`
+
 ## 1.0.7
 
 - audited the base-game gold write paths again so host-authored shared-gold sync now covers the current event, relic, power, potion, card, reward, shop, and treasure-room callsites from one code path

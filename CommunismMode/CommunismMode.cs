@@ -183,7 +183,11 @@ internal static class CommunismModeRuntime
 
 	public static bool ShouldBypassNeowModifierFlow(IRunState? runState)
 	{
-		return HasCommunismModifier(runState);
+		// Keep Neow aligned with the sanitized modifier list seen by vanilla clients.
+		// We only restore the standard relic flow when Communism is the sole modifier.
+		return runState != null
+			&& runState.Modifiers.Any(static modifier => modifier is DeprecatedModifier)
+			&& runState.Modifiers.All(static modifier => modifier is DeprecatedModifier);
 	}
 
 	public static bool IsHostAuthoritative(Player? player)
