@@ -134,6 +134,8 @@ internal static class CommunismModeRuntime
 
 	private static readonly MethodInfo NetMessageBusSerializeMessageMethod = AccessTools.Method(typeof(NetMessageBus), "SerializeMessage")!;
 
+	private static readonly MethodInfo RunStateModifiersSetter = AccessTools.PropertySetter(typeof(RunState), nameof(RunState.Modifiers))!;
+
 	private static readonly ModelId DeprecatedModifierId = ModelDb.GetId<DeprecatedModifier>();
 
 	private static readonly string[] IncludeSourceOnAllPeerTypePrefixes =
@@ -188,6 +190,31 @@ internal static class CommunismModeRuntime
 		return runState != null
 			&& runState.Modifiers.Any(static modifier => modifier is DeprecatedModifier)
 			&& runState.Modifiers.All(static modifier => modifier is DeprecatedModifier);
+	}
+
+	public static IReadOnlyList<ModifierModel>? HideCommunismModifierForVanillaNeow(IRunState? runState)
+	{
+		if (!ShouldBypassNeowModifierFlow(runState) || runState is not RunState concreteRunState)
+		{
+			return null;
+		}
+
+		IReadOnlyList<ModifierModel> originalModifiers = concreteRunState.Modifiers;
+		IReadOnlyList<ModifierModel> sanitizedModifiers = originalModifiers
+			.Where(static modifier => modifier is not DeprecatedModifier)
+			.ToList();
+		RunStateModifiersSetter.Invoke(concreteRunState, new object[] { sanitizedModifiers });
+		return originalModifiers;
+	}
+
+	public static void RestoreModifiersAfterVanillaNeow(IRunState? runState, IReadOnlyList<ModifierModel>? originalModifiers)
+	{
+		if (originalModifiers == null || runState is not RunState concreteRunState)
+		{
+			return;
+		}
+
+		RunStateModifiersSetter.Invoke(concreteRunState, new object[] { originalModifiers });
 	}
 
 	public static bool IsHostAuthoritative(Player? player)
@@ -362,7 +389,7 @@ internal static class CommunismModeRuntime
 
 	private static RunLocation GetCurrentGoldSyncLocation(IRunState runState)
 	{
-		return runState.CurrentLocation;
+		return runState.RunLocation;
 	}
 
 	public static void ApplyInitialSharedGoldIfNeeded()
@@ -452,7 +479,7 @@ internal static class CommunismModeRuntime
 			int sharedGoldBefore = GetSharedGold(runState);
 			SetSharedGold(runState, sharedGoldBefore + goldGained);
 			SyncImmediateSharedGoldChangeIfNeeded(player, originalAmount: goldGained, resolvedAmount: goldGained, isLoss: false, sourceContext);
-			if (runState.CurrentLocation.coord == null)
+			if (runState.RunLocation.mapLocation.coord == null)
 			{
 				Log.Warn($"Communism Mode Neow gold gain. Player={player.NetId}, Amount={goldGained}, SharedBefore={sharedGoldBefore}, SharedAfter={GetSharedGold(runState)}");
 			}
@@ -496,7 +523,7 @@ internal static class CommunismModeRuntime
 		int sharedGoldBefore = GetSharedGold(player.RunState);
 		SetSharedGold(player.RunState, Math.Max(0, sharedGoldBefore - goldLost));
 		SyncImmediateSharedGoldChangeIfNeeded(player, originalAmount: originalGoldLost, resolvedAmount: goldLost, isLoss: true, sourceContext);
-		if (player.RunState.CurrentLocation.coord == null)
+		if (player.RunState.RunLocation.mapLocation.coord == null)
 		{
 			Log.Warn($"Communism Mode Neow gold loss. Player={player.NetId}, Original={originalGoldLost}, Resolved={goldLost}, SharedBefore={sharedGoldBefore}, SharedAfter={GetSharedGold(player.RunState)}");
 		}
@@ -738,7 +765,7 @@ internal static class CommunismModeRuntime
 			RewardObtainedMessage message = new()
 			{
 				rewardType = RewardType.Gold,
-				location = runState.CurrentLocation,
+				location = runState.RunLocation,
 				goldAmount = delta,
 				wasSkipped = false
 			};
@@ -746,7 +773,7 @@ internal static class CommunismModeRuntime
 		}
 
 		syncState.SyncedPeerIds.Add(peerId);
-		Log.Warn($"Communism Mode initial shared gold sync sent. Peer={peerId}, Location={runState.CurrentLocation}, Deltas={string.Join(',', runState.Players.Select(player => $"{player.NetId}:{syncState.InitialGoldDeltaByPlayer.GetValueOrDefault(player.NetId)}"))}");
+		Log.Warn($"Communism Mode initial shared gold sync sent. Peer={peerId}, Location={runState.RunLocation}, Deltas={string.Join(',', runState.Players.Select(player => $"{player.NetId}:{syncState.InitialGoldDeltaByPlayer.GetValueOrDefault(player.NetId)}"))}");
 	}
 
 	private static int ResolveSharedGoldLossAmount(Player player, int originalAmount, GoldLossType goldLossType)
@@ -1401,15 +1428,16 @@ public static class CommunismModeLobbyBeginRunSerializePatch
 [HarmonyPatch(typeof(Neow), nameof(Neow.InitialDescription), MethodType.Getter)]
 public static class CommunismModeNeowDescriptionPatch
 {
-	[HarmonyPostfix]
-	private static void Postfix(Neow __instance, ref LocString __result)
+	[HarmonyPrefix]
+	private static void Prefix(Neow __instance, out IReadOnlyList<ModifierModel>? __state)
 	{
-		if (!CommunismModeRuntime.ShouldBypassNeowModifierFlow(__instance.Owner?.RunState))
-		{
-			return;
-		}
+		__state = CommunismModeRuntime.HideCommunismModifierForVanillaNeow(__instance.Owner?.RunState);
+	}
 
-		__result = new LocString("ancients", __instance.Id.Entry + ".pages.INITIAL.description");
+	[HarmonyFinalizer]
+	private static void Finalizer(Neow __instance, IReadOnlyList<ModifierModel>? __state)
+	{
+		CommunismModeRuntime.RestoreModifiersAfterVanillaNeow(__instance.Owner?.RunState, __state);
 	}
 }
 
@@ -1417,122 +1445,15 @@ public static class CommunismModeNeowDescriptionPatch
 public static class CommunismModeNeowGenerateInitialOptionsPatch
 {
 	[HarmonyPrefix]
-	private static bool Prefix(Neow __instance, ref IReadOnlyList<EventOption> __result)
+	private static void Prefix(Neow __instance, out IReadOnlyList<ModifierModel>? __state)
 	{
-		if (!CommunismModeRuntime.ShouldBypassNeowModifierFlow(__instance.Owner?.RunState))
-		{
-			return true;
-		}
-
-		List<EventOption> options = BuildStandardNeowOptions(__instance);
-		if (__instance.DebugOption != null)
-		{
-			options.RemoveAt(0);
-			options.Insert(0, __instance.AllPossibleOptions.First((EventOption c) => c.TextKey.Contains(__instance.DebugOption)));
-		}
-
-		__result = options;
-		return false;
+		__state = CommunismModeRuntime.HideCommunismModifierForVanillaNeow(__instance.Owner?.RunState);
 	}
 
-	private static List<EventOption> BuildStandardNeowOptions(Neow neow)
+	[HarmonyFinalizer]
+	private static void Finalizer(Neow __instance, IReadOnlyList<ModifierModel>? __state)
 	{
-		Player owner = neow.Owner!;
-		List<EventOption> curseOptions = new List<EventOption>
-		{
-			CreateNeowRelicOption<CursedPearl>(neow, "NEOW.pages.DONE.CURSED.description"),
-			CreateNeowRelicOption<LargeCapsule>(neow, "NEOW.pages.DONE.CURSED.description"),
-			CreateNeowRelicOption<LeafyPoultice>(neow, "NEOW.pages.DONE.CURSED.description"),
-			CreateNeowRelicOption<PrecariousShears>(neow, "NEOW.pages.DONE.CURSED.description")
-		};
-
-		if (ScrollBoxes.CanGenerateBundles(owner))
-		{
-			curseOptions.Add(CreateNeowRelicOption<ScrollBoxes>(neow, "NEOW.pages.DONE.CURSED.description"));
-		}
-
-		if (owner.RunState.Players.Count == 1)
-		{
-			curseOptions.Add(CreateNeowRelicOption<SilverCrucible>(neow, "NEOW.pages.DONE.CURSED.description"));
-		}
-
-		EventOption eventOption = neow.Rng.NextItem(curseOptions)!;
-		RelicModel? eventRelic = eventOption.Relic;
-		List<EventOption> positiveOptions = new List<EventOption>
-		{
-			CreateNeowRelicOption<ArcaneScroll>(neow, "NEOW.pages.DONE.POSITIVE.description"),
-			CreateNeowRelicOption<BoomingConch>(neow, "NEOW.pages.DONE.POSITIVE.description"),
-			CreateNeowRelicOption<Pomander>(neow, "NEOW.pages.DONE.POSITIVE.description"),
-			CreateNeowRelicOption<GoldenPearl>(neow, "NEOW.pages.DONE.POSITIVE.description"),
-			CreateNeowRelicOption<LeadPaperweight>(neow, "NEOW.pages.DONE.POSITIVE.description"),
-			CreateNeowRelicOption<NewLeaf>(neow, "NEOW.pages.DONE.POSITIVE.description"),
-			CreateNeowRelicOption<NeowsTorment>(neow, "NEOW.pages.DONE.POSITIVE.description"),
-			CreateNeowRelicOption<PreciseScissors>(neow, "NEOW.pages.DONE.POSITIVE.description"),
-			CreateNeowRelicOption<LostCoffer>(neow, "NEOW.pages.DONE.POSITIVE.description")
-		};
-
-		if (eventRelic is CursedPearl)
-		{
-			positiveOptions.RemoveAll(static (EventOption o) => o.Relic is GoldenPearl);
-		}
-
-		if (eventRelic is PrecariousShears)
-		{
-			positiveOptions.RemoveAll(static (EventOption o) => o.Relic is PreciseScissors);
-		}
-
-		if (eventRelic is LeafyPoultice)
-		{
-			positiveOptions.RemoveAll(static (EventOption o) => o.Relic is NewLeaf);
-		}
-
-		if (owner.RunState.Players.Count > 1)
-		{
-			positiveOptions.Add(CreateNeowRelicOption<MassiveScroll>(neow, "NEOW.pages.DONE.POSITIVE.description"));
-		}
-
-		if (neow.Rng.NextBool())
-		{
-			positiveOptions.Add(CreateNeowRelicOption<NutritiousOyster>(neow, "NEOW.pages.DONE.POSITIVE.description"));
-		}
-		else
-		{
-			positiveOptions.Add(CreateNeowRelicOption<StoneHumidifier>(neow, "NEOW.pages.DONE.POSITIVE.description"));
-		}
-
-		if (eventRelic is not LargeCapsule)
-		{
-			if (neow.Rng.NextBool())
-			{
-				positiveOptions.Add(CreateNeowRelicOption<LavaRock>(neow, "NEOW.pages.DONE.POSITIVE.description"));
-			}
-			else
-			{
-				positiveOptions.Add(CreateNeowRelicOption<SmallCapsule>(neow, "NEOW.pages.DONE.POSITIVE.description"));
-			}
-		}
-
-		List<EventOption> list = positiveOptions.UnstableShuffle(neow.Rng).Take(2).ToList();
-		list.Add(eventOption);
-		return list;
-	}
-
-	private static EventOption CreateNeowRelicOption<T>(Neow neow, string customDonePage) where T : RelicModel
-	{
-		return CreateNeowRelicOption(neow, ModelDb.Relic<T>().ToMutable(), "INITIAL", customDonePage);
-	}
-
-	private static EventOption CreateNeowRelicOption(Neow neow, RelicModel relic, string pageName, string customDonePage)
-	{
-		relic.AssertMutable();
-		relic.Owner = neow.Owner!;
-		string textKey = $"{StringHelper.Slugify(neow.GetType().Name)}.pages.{pageName}.options.{relic.Id.Entry}";
-		return EventOption.FromRelic(relic, neow, async () =>
-		{
-			await RelicCmd.Obtain(relic, neow.Owner!);
-			Traverse.Create(neow).Field<string?>("_customDonePage").Value = customDonePage;
-			Traverse.Create(neow).Method("Done").GetValue();
-		}, textKey);
+		CommunismModeRuntime.RestoreModifiersAfterVanillaNeow(__instance.Owner?.RunState, __state);
 	}
 }
 

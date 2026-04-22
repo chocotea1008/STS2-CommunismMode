@@ -7,7 +7,7 @@
     <TargetFramework>netcoreapp9.0</TargetFramework>
     <LangVersion>12.0</LangVersion>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
-    <Version>1.0.8</Version>
+    <Version>1.0.9</Version>
     <Authors>chocotea1008</Authors>
     <Company>chocotea1008</Company>
     <Description>Host-authoritative shared-gold custom run modifier for Slay the Spire 2.</Description>

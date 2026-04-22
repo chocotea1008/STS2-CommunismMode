@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.9
+
+- updated the mod for the official `v0.103.2` game API by replacing removed `CurrentLocation` reads with `RunLocation`
+- stopped copying Neow's vanilla reward-generation logic inside the mod; Communism now temporarily hides only its placeholder modifier and lets the current game build the starting reward options itself
+- fixed multiplayer Neow starts after the beta changes reached the official branch, including cases where starting rewards could not be accepted
+
 ## 1.0.8
 
 - limited the Communism-specific Neow override to runs where `Communism` is the only modifier so deck-building modifiers such as `Sealed Deck` and `Draft` keep their normal card-selection flow
